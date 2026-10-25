@@ -6,6 +6,28 @@ import Stripe from "stripe";
 import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 
+// Typed like the removed field under old stripe types, like the new location under new ones.
+type InvoiceSubscription<T> = T extends { subscription: infer S }
+  ? S
+  : T extends { parent: infer P }
+    ? NonNullable<P> extends { subscription_details: infer D }
+      ? NonNullable<D> extends { subscription: infer S }
+        ? S | null
+        : string | null
+      : string | null
+    : string | null;
+
+// The old top-level field when present (old-version payloads), otherwise the new location.
+function getInvoiceSubscription<T extends object>(invoice: T): InvoiceSubscription<T> {
+  const legacy: unknown = Reflect.get(invoice, 'subscription');
+  const parent: unknown = Reflect.get(invoice, 'parent');
+  const details: unknown =
+    parent && typeof parent === 'object' ? Reflect.get(parent, 'subscription_details') : undefined;
+  const moved: unknown =
+    details && typeof details === 'object' ? Reflect.get(details, 'subscription') : undefined;
+  return (legacy !== undefined ? legacy : (moved ?? null)) as InvoiceSubscription<T>;
+}
+
 type Metadata = {
   userId: string; // clerkId
 };
@@ -23,7 +45,7 @@ export const pay = action({
     const domain =
       (process.env.NEXT_PUBLIC_URL as string) ?? "http://localhost:3000";
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-      apiVersion: "2024-06-20",
+      apiVersion: "2026-09-30.endive",
     });
     const session = await stripe.checkout.sessions.create({
       line_items: [{ price: args.priceId!, quantity: 1 }],
@@ -61,7 +83,7 @@ export const createPortal = action({
     const domain =
       (process.env.NEXT_PUBLIC_URL as string) ?? "http://localhost:3000";
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-      apiVersion: "2024-06-20",
+      apiVersion: "2026-09-30.endive",
     });
 
     const portalSession = await stripe.billingPortal.sessions.create({
@@ -77,7 +99,7 @@ export const fulfill = internalAction({
   args: { signature: v.string(), payload: v.string() },
   handler: async (ctx, args) => {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-      apiVersion: "2024-06-20",
+      apiVersion: "2026-09-30.endive",
     });
 
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -114,7 +136,7 @@ export const fulfill = internalAction({
         };
 
         const subscription = await stripe.subscriptions.retrieve(
-          completedEvent.subscription as string,
+          (getInvoiceSubscription(completedEvent)) as string,
         );
 
         console.log("invoice paid subscription: ", subscription);
